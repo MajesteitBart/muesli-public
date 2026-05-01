@@ -7,14 +7,38 @@ require('dotenv').config();
 // API configuration for Recall.ai
 const RECALLAI_API_URL = process.env.RECALLAI_API_URL || 'https://api.recall.ai';
 const RECALLAI_API_KEY = process.env.RECALLAI_API_KEY;
+const TRANSCRIPT_PROVIDER = process.env.RECALLAI_TRANSCRIPT_PROVIDER || 'deepgram_streaming';
+const TRANSCRIPT_PROVIDER_CONFIG = getTranscriptProviderConfig();
+
+function getTranscriptProviderConfig() {
+    if (process.env.RECALLAI_TRANSCRIPT_PROVIDER_CONFIG) {
+        try {
+            return JSON.parse(process.env.RECALLAI_TRANSCRIPT_PROVIDER_CONFIG);
+        } catch (e) {
+            console.error("RECALLAI_TRANSCRIPT_PROVIDER_CONFIG must be valid JSON:", e.message);
+            return {};
+        }
+    }
+
+    if (TRANSCRIPT_PROVIDER === 'recallai_streaming') {
+        return { mode: 'prioritize_low_latency' };
+    }
+
+    if (TRANSCRIPT_PROVIDER === 'deepgram_streaming') {
+        return { model: 'nova-3', language: 'multi', diarize: true };
+    }
+
+    return {};
+}
 
 app.get('/start-recording', async (req, res) => {
-    console.log(`Creating upload token with API key: ${RECALLAI_API_KEY.slice(0,4)}...`);
-
     if (!RECALLAI_API_KEY) {
         console.error("RECALLAI_API_KEY is missing! Set it in .env file");
         return res.json({ status: 'error', message: 'RECALLAI_API_KEY is missing' });
     }
+
+    console.log(`Creating upload token with API key: ${RECALLAI_API_KEY.slice(0,4)}...`);
+    console.log(`Using transcript provider: ${TRANSCRIPT_PROVIDER}`);
 
     const url = `${RECALLAI_API_URL}/api/v1/sdk_upload/`;
 
@@ -23,7 +47,7 @@ app.get('/start-recording', async (req, res) => {
             recording_config: {
                 transcript: {
                     provider: {
-                        assembly_ai_v3_streaming: {}
+                        [TRANSCRIPT_PROVIDER]: TRANSCRIPT_PROVIDER_CONFIG
                     }
                 },
                 realtime_endpoints: [
@@ -33,6 +57,7 @@ app.get('/start-recording', async (req, res) => {
                             "participant_events.join",
                             "video_separate_png.data",
                             "transcript.data",
+                            "transcript.partial_data",
                             "transcript.provider_data"
                         ]
                     },

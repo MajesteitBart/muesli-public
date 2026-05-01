@@ -120,6 +120,125 @@ async function saveMeetingsData() {
 
 // Keep track of which meeting is being edited
 let currentEditingMeetingId = null;
+let meetingTranscriptVisible = localStorage.getItem('meetingTranscriptVisible') === 'true';
+
+function getMeetingById(meetingId) {
+  return [...upcomingMeetings, ...pastMeetings].find(m => m.id === meetingId);
+}
+
+function setMeetingTranscriptVisible(isVisible) {
+  meetingTranscriptVisible = isVisible;
+  localStorage.setItem('meetingTranscriptVisible', String(isVisible));
+
+  const panel = document.getElementById('meetingTranscriptPanel');
+  const toggle = document.getElementById('meetingTranscriptToggle');
+
+  if (panel) {
+    panel.classList.toggle('hidden', !isVisible);
+  }
+
+  if (toggle) {
+    toggle.classList.toggle('active', isVisible);
+    toggle.setAttribute('aria-pressed', String(isVisible));
+  }
+}
+
+function updateMeetingTranscriptPanel(transcript = []) {
+  const transcriptContent = document.getElementById('meetingTranscriptContent');
+  const transcriptStatus = document.getElementById('meetingTranscriptStatus');
+  const transcriptCount = document.getElementById('meetingTranscriptCount');
+
+  if (!transcriptContent) return;
+
+  const entries = Array.isArray(transcript) ? transcript : [];
+  const wasAtBottom = transcriptContent.scrollTop + transcriptContent.clientHeight >= transcriptContent.scrollHeight - 5;
+
+  if (transcriptCount) {
+    transcriptCount.textContent = String(entries.length);
+  }
+
+  if (transcriptStatus) {
+    transcriptStatus.textContent = entries.length > 0
+      ? `${entries.length} transcript ${entries.length === 1 ? 'entry' : 'entries'} captured`
+      : 'Live transcript will appear here during recording';
+  }
+
+  transcriptContent.replaceChildren();
+
+  if (entries.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'meeting-transcript-empty';
+    empty.textContent = 'No transcript available yet';
+    transcriptContent.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement('div');
+  list.className = 'meeting-transcript-list';
+
+  entries.forEach((entry, index) => {
+    const entryDiv = document.createElement('div');
+    entryDiv.className = 'meeting-transcript-entry';
+    if (index === entries.length - 1) {
+      entryDiv.classList.add('newest-entry');
+    }
+
+    const header = document.createElement('div');
+    header.className = 'meeting-transcript-entry-header';
+
+    const speaker = document.createElement('div');
+    speaker.className = 'meeting-transcript-speaker';
+    speaker.textContent = entry.speaker || 'Unknown';
+
+    const timestamp = document.createElement('div');
+    timestamp.className = 'meeting-transcript-time';
+    const date = entry.timestamp ? new Date(entry.timestamp) : null;
+    timestamp.textContent = date && !Number.isNaN(date.getTime())
+      ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      : '';
+
+    const text = document.createElement('div');
+    text.className = 'meeting-transcript-text';
+    text.textContent = entry.text || '';
+
+    header.appendChild(speaker);
+    header.appendChild(timestamp);
+    entryDiv.appendChild(header);
+    entryDiv.appendChild(text);
+    list.appendChild(entryDiv);
+  });
+
+  transcriptContent.appendChild(list);
+
+  if (wasAtBottom) {
+    setTimeout(() => {
+      transcriptContent.scrollTop = transcriptContent.scrollHeight;
+    }, 0);
+  }
+}
+
+function initMeetingTranscriptPanel() {
+  const toggle = document.getElementById('meetingTranscriptToggle');
+  const closeButton = document.getElementById('closeMeetingTranscriptBtn');
+
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      setMeetingTranscriptVisible(!meetingTranscriptVisible);
+      if (currentEditingMeetingId) {
+        const meeting = getMeetingById(currentEditingMeetingId);
+        updateMeetingTranscriptPanel(meeting?.transcript || []);
+      }
+    });
+  }
+
+  if (closeButton) {
+    closeButton.addEventListener('click', () => {
+      setMeetingTranscriptVisible(false);
+    });
+  }
+
+  setMeetingTranscriptVisible(meetingTranscriptVisible);
+}
 
 // Function to save the current note
 async function saveCurrentNote() {
@@ -329,6 +448,8 @@ function showEditorView(meetingId) {
   // Set the date display
   const dateObj = new Date(meeting.date);
   document.getElementById('noteDate').textContent = formatDate(dateObj);
+  setMeetingTranscriptVisible(meetingTranscriptVisible);
+  updateMeetingTranscriptPanel(meeting.transcript || []);
 
   // Get the editor element
   const editorElement = document.getElementById('simple-editor');
@@ -1231,6 +1352,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Initialize the debug panel
   initDebugPanel();
+  initMeetingTranscriptPanel();
 
   // Try to load the latest data from file - this is the only data source
   await loadMeetingsDataFromFile();
@@ -1393,6 +1515,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           // Update the transcript area in the debug panel
           updateDebugTranscript(meeting.transcript);
+          updateMeetingTranscriptPanel(meeting.transcript);
 
           // Show notification about new transcript if debug panel is closed
           const debugPanel = document.getElementById('debugPanel');

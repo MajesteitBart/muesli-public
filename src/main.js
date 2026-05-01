@@ -16,20 +16,20 @@ function getHeaderLines() {
   ];
 }
 
-// Initialize OpenAI client with OpenRouter as the base URL
-const openai = new OpenAI({
+// Initialize OpenRouter only when summaries are enabled.
+const openai = process.env.OPENROUTER_KEY ? new OpenAI({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: process.env.OPENROUTER_KEY,
   defaultHeaders: {
     "HTTP-Referer": "https://recall.ai",
     "X-Title": "Muesli AI Notetaker"
   }
-});
+}) : null;
 
 // Define available models with their capabilities
 const MODELS = {
   // Primary models
-  PRIMARY: "anthropic/claude-3.7-sonnet",
+  PRIMARY: process.env.OPENROUTER_MODEL || "anthropic/claude-3.7-sonnet",
   FALLBACKS: []
 };
 
@@ -777,6 +777,13 @@ ipcMain.handle('generateMeetingSummary', async (event, meetingId) => {
       };
     }
 
+    if (!openai) {
+      return {
+        success: false,
+        error: 'OPENROUTER_KEY is not configured. Set it in .env to enable AI summaries.'
+      };
+    }
+
     // Log summary generation to console instead of showing a notification
     console.log('Generating AI summary for meeting: ' + meetingId);
 
@@ -946,6 +953,13 @@ ipcMain.handle('generateMeetingSummaryStreaming', async (event, meetingId) => {
       return {
         success: false,
         error: 'No transcript available for this meeting'
+      };
+    }
+
+    if (!openai) {
+      return {
+        success: false,
+        error: 'OPENROUTER_KEY is not configured. Set it in .env to enable AI summaries.'
       };
     }
 
@@ -1344,16 +1358,21 @@ async function processParticipantJoin(evt) {
   }
 }
 
-let currentUnknownSpeaker = -1;
+const latestProviderSpeakerByWindow = {};
 
 async function processTranscriptProviderData(evt) {
-  // let speakerId = evt.data.data.payload.
-  try {
-    if (evt.data.data.data.payload.channel.alternatives[0].words[0].speaker !== undefined) {
-      currentUnknownSpeaker = evt.data.data.data.payload.channel.alternatives[0].words[0].speaker;
-    }
-  } catch (error) {
-    // console.error("Error processing provider data:", error);
+  const windowId = evt.window?.id;
+  if (!windowId) return;
+
+  const words = evt.data?.data?.data?.payload?.channel?.alternatives?.[0]?.words;
+  if (!Array.isArray(words) || words.length === 0) {
+    return;
+  }
+
+  const speakerId = words.find(word => word.speaker !== undefined)?.speaker;
+  if (speakerId !== undefined) {
+    latestProviderSpeakerByWindow[windowId] = speakerId;
+    console.log(`Provider diarization speaker for ${windowId}: Speaker ${speakerId}`);
   }
 }
 
@@ -1388,8 +1407,8 @@ async function processTranscriptData(evt) {
     let speaker;
     if (evt.data.data.participant?.name && evt.data.data.participant?.name !== "Host" && evt.data.data.participant?.name !== "Guest") {
       speaker = evt.data.data.participant?.name;
-    } else if (currentUnknownSpeaker !== -1) {
-      speaker = `Speaker ${currentUnknownSpeaker}`;
+    } else if (latestProviderSpeakerByWindow[windowId] !== undefined) {
+      speaker = `Speaker ${latestProviderSpeakerByWindow[windowId]}`;
     } else {
       speaker = "Unknown Speaker";
     }
@@ -1449,6 +1468,11 @@ async function generateMeetingSummary(meeting, progressCallback = null) {
     }
 
     console.log(`Generating AI summary for meeting: ${meeting.id}`);
+
+    if (!openai) {
+      console.log('OPENROUTER_KEY is not configured; skipping AI summary generation.');
+      return 'AI summary generation is disabled. Set OPENROUTER_KEY in .env to enable summaries.';
+    }
 
     // Format the transcript into a single text for the AI to process
     const transcriptText = meeting.transcript.map(entry =>
@@ -1632,7 +1656,7 @@ async function updateNoteWithRecordingInfo(recordingId) {
     await fileOperationManager.writeData(meetingsData);
 
     // Generate AI summary if there's a transcript
-    if (meeting.transcript && meeting.transcript.length > 0) {
+    if (meeting.transcript && meeting.transcript.length > 0 && openai) {
       console.log(`Generating AI summary for meeting ${meeting.id}...`);
 
       // Log summary generation to console instead of showing a notification
